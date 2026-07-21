@@ -4,7 +4,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from google import genai
 
 # ตั้งค่าหน้าเว็บ
@@ -35,16 +34,22 @@ if st.button("🚀 ให้ AI เริ่มทำข้อสอบ"):
             st.error(f"❌ API Key มีปัญหา: {e}")
             st.stop()
             
-        # ตั้งค่า Chrome แบบล่องหนสำหรับ Cloud Server
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
+        driver = None # กำหนดตัวแปรไว้ก่อนเพื่อป้องกัน NameError
         
         try:
+            # ตั้งค่า Chrome แบบล่องหนสำหรับ Cloud Server
+            options = Options()
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            
+            # ชี้เป้าไปที่ตัวเปิดเบราว์เซอร์ของระบบ Linux โดยตรง (แก้ปัญหาเวอร์ชันไม่ตรง)
+            options.binary_location = "/usr/bin/chromium"
+            service = Service("/usr/bin/chromedriver")
+            
             # เปิด Chrome
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            driver = webdriver.Chrome(service=service, options=options)
             driver.get(form_url)
             time.sleep(3)
             
@@ -86,4 +91,6 @@ if st.button("🚀 ให้ AI เริ่มทำข้อสอบ"):
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาดในการดึงข้อมูลจากเว็บ: {e}")
         finally:
-            driver.quit()
+            # เช็คก่อนว่ามีบอทเปิดอยู่จริงๆ ถึงจะสั่งปิด (แก้ NameError)
+            if driver is not None:
+                driver.quit()
