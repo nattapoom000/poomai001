@@ -1,4 +1,4 @@
 streamlit
 selenium
 webdriver-manager
-google-genai
+google-generativeai
