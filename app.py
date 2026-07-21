@@ -12,7 +12,7 @@ import google.generativeai as genai
 # ตั้งค่าหน้าเว็บ POOM AI SNTC
 # ==========================================
 st.set_page_config(page_title="POOM AI SNTC", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC")
+st.title("🤖 POOM AI SNTC V1")
 st.write("แอปพลิเคชันช่วยตอบ Google Form อัตโนมัติ (รอบคอบพิเศษ รองรับวิเคราะห์รูปภาพและภาษาไทย)")
 
 # ==========================================
