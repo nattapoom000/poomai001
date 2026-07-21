@@ -10,10 +10,10 @@ from selenium.webdriver.chrome.service import Service
 import google.generativeai as genai
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V2
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V3
 # ==========================================
 st.set_page_config(page_title="POOM AI SNTC", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC V2")
+st.title("🤖 POOM AI SNTC V3")
 st.write("แอปพลิเคชันช่วยตอบ Google Form อัตโนมัติ (เวอร์ชันส่งภาพวิเคราะห์รวดเดียว ⚡)")
 
 # ==========================================
@@ -31,8 +31,24 @@ if st.button("🚀 ให้ POOM AI เริ่มทำข้อสอบ", t
         
         try:
             genai.configure(api_key=api_key_input)
-            # ใช้โมเดลที่เสถียรที่สุดสำหรับการอ่านภาพและข้อความ
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # --- ค้นหาโมเดลที่รองรับอัตโนมัติ (แก้ปัญหา 404) ---
+            working_model_name = 'gemini-1.5-flash' # ค่าเริ่มต้น
+            try:
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                flash_models = [m for m in available_models if 'flash' in m]
+                if flash_models:
+                    working_model_name = flash_models[0]
+                else:
+                    pro_models = [m for m in available_models if 'pro' in m]
+                    if pro_models:
+                        working_model_name = pro_models[0]
+            except:
+                pass
+                
+            model = genai.GenerativeModel(working_model_name)
+            st.success(f"✅ เชื่อมต่อ AI สำเร็จ! (ใช้โมเดล: {working_model_name})")
+            
         except Exception as e:
             st.error(f"❌ API Key มีปัญหา: {e}")
             st.stop()
