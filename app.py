@@ -1,24 +1,32 @@
 import streamlit as st
 import time
+from io import BytesIO
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from google import genai
+import google.generativeai as genai
 
+# ==========================================
 # ตั้งค่าหน้าเว็บ
-st.set_page_config(page_title="AI Form Solver", page_icon="🤖")
+# ==========================================
+st.set_page_config(page_title="AI Form Solver (Ultimate)", page_icon="🤖")
 st.title("🤖 AI Form Solver (Online)")
-st.write("แอปพลิเคชันช่วยตอบ Google Form อัตโนมัติด้วย Gemini AI")
+st.write("แอปพลิเคชันช่วยตอบ Google Form อัตโนมัติ เวอร์ชันรองรับรูปภาพและป้องกันการหลุด")
 
-# --- ส่วนที่ 1: รับค่าจากผู้ใช้งาน ---
+# ==========================================
+# ส่วนที่ 1: รับค่าจากผู้ใช้งาน
+# ==========================================
 st.markdown("### 1. ตั้งค่าการเชื่อมต่อ AI")
-api_key_input = st.text_input("🔑 ใส่ Gemini API Key ของคุณ:", type="password", help="รับ API Key ฟรีได้ที่ Google AI Studio (ระบบจะไม่บันทึก Key ของคุณไว้)")
+api_key_input = st.text_input("🔑 ใส่ Gemini API Key ของคุณ:", type="password")
 
 st.markdown("### 2. ลิงก์ข้อสอบ")
 form_url = st.text_input("🔗 วางลิงก์ Google Form (เฉพาะฟอร์มที่ไม่ต้องล็อกอิน):")
 
-# --- ส่วนที่ 2: เริ่มทำงาน ---
+# ==========================================
+# ส่วนที่ 2: เริ่มทำงาน
+# ==========================================
 if st.button("🚀 ให้ AI เริ่มทำข้อสอบ"):
     if not api_key_input:
         st.error("❌ กรุณาใส่ Gemini API Key ก่อนครับ")
@@ -27,70 +35,143 @@ if st.button("🚀 ให้ AI เริ่มทำข้อสอบ"):
     else:
         st.info("🌐 กำลังเปิดบอทบน Cloud กรุณารอสักครู่...")
         
-        # ตั้งค่า Client ด้วย API Key ที่ผู้ใช้กรอกมา
+        # ตั้งค่า AI
         try:
-            client = genai.Client(api_key=api_key_input)
+            genai.configure(api_key=api_key_input)
+            model = genai.GenerativeModel('gemini-1.5-flash')
         except Exception as e:
             st.error(f"❌ API Key มีปัญหา: {e}")
             st.stop()
             
-        driver = None # กำหนดตัวแปรไว้ก่อนเพื่อป้องกัน NameError
+        driver = None 
         
         try:
-            # ตั้งค่า Chrome แบบล่องหนสำหรับ Cloud Server
+            # ตั้งค่า Chrome ล่องหน
             options = Options()
             options.add_argument("--headless")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             
-            # ชี้เป้าไปที่ตัวเปิดเบราว์เซอร์ของระบบ Linux โดยตรง (แก้ปัญหาเวอร์ชันไม่ตรง)
             options.binary_location = "/usr/bin/chromium"
             service = Service("/usr/bin/chromedriver")
             
-            # เปิด Chrome
             driver = webdriver.Chrome(service=service, options=options)
             driver.get(form_url)
             time.sleep(3)
+
+            # ---------------------------------------------------------
+            # 1. ระบบจัดการหน้าแรก (ข้ามหน้า)
+            # ---------------------------------------------------------
+            st.info("🔍 ตรวจสอบโครงสร้างหน้าเว็บ (ข้ามหน้าอัตโนมัติหากมี)...")
+            try:
+                text_inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='email'] | //textarea")
+                for txt in text_inputs:
+                    if txt.is_displayed():
+                        txt.send_keys("ทดสอบ")
+                
+                next_buttons = driver.find_elements(By.XPATH, "//div[@role='button']//span[contains(text(), 'ถัดไป') or contains(text(), 'Next')]/ancestor::div[@role='button']")
+                for btn in next_buttons:
+                    if btn.is_displayed():
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                        time.sleep(1)
+                        btn.click()
+                        time.sleep(3) 
+                        st.success("➡️ บอทข้ามหน้าแรกมายังหน้าข้อสอบสำเร็จ!")
+                        break
+            except Exception:
+                pass 
             
+            # ---------------------------------------------------------
+            # 2. แคปหน้าจอ
+            # ---------------------------------------------------------
+            st.markdown("### 📸 ภาพหน้าจอที่บอทมองเห็น ณ ปัจจุบัน")
+            screenshot = driver.get_screenshot_as_png()
+            st.image(screenshot, caption="ตรวจสอบความถูกต้องของหน้าเว็บ")
+
+            # ---------------------------------------------------------
+            # 3. เริ่มกวาดข้อสอบ
+            # ---------------------------------------------------------
             question_blocks = driver.find_elements(By.XPATH, "//div[@role='listitem']")
             st.success(f"พบบล็อกคำถามทั้งหมด {len(question_blocks)} ข้อ")
             
-            # กวาดคำถาม
+            export_text = "เฉลยข้อสอบจาก Gemini AI\n" + ("="*30) + "\n\n"
+            
             for index, block in enumerate(question_blocks):
+                # หน่วงเวลา 3 วินาทีต่อข้อ ป้องกัน Rate Limit
+                if index > 0:
+                    time.sleep(3)
+                    
                 heading_elements = block.find_elements(By.XPATH, ".//div[@role='heading']")
-                if not heading_elements: continue
-                question_text = heading_elements[0].text
+                question_text = heading_elements[0].text if heading_elements else ""
+                
+                # ระบบดึงรูปภาพ (Vision)
+                img_elements = block.find_elements(By.XPATH, ".//img")
+                img_content = None
+                if img_elements:
+                    try:
+                        img_png = img_elements[0].screenshot_as_png
+                        img_content = Image.open(BytesIO(img_png))
+                        st.caption("📸 (ส่งรูปภาพในข้อนี้ให้ AI วิเคราะห์ด้วย)")
+                    except:
+                        pass
                 
                 radio_buttons = block.find_elements(By.XPATH, ".//div[@role='radio']")
+                if not radio_buttons: continue
                 choices = [r.get_attribute("data-value") for r in radio_buttons if r.get_attribute("data-value")]
                 
-                if question_text and choices:
-                    st.write(f"📝 **ข้อ {index + 1}:** {question_text}")
+                display_q = question_text if question_text else "[ข้อสอบรูปภาพ]"
+                if choices:
+                    st.write(f"📝 **ข้อ {index + 1}:** {display_q}")
                     
-                    # ส่งถาม Gemini
-                    prompt = f"อ่านคำถามและเลือกคำตอบที่ถูกต้องที่สุดเพียง 1 ข้อ\nคำถาม: {question_text}\nตัวเลือก:\n{chr(10).join([f'- {c}' for c in choices])}\nตอบเฉพาะข้อความตัวเลือก ห้ามมีคำอธิบาย"
+                    prompt = f"อ่านคำถามและเลือกคำตอบที่ถูกต้องที่สุดเพียง 1 ข้อ\nคำถาม: {display_q}\nตัวเลือก:\n{chr(10).join([f'- {c}' for c in choices])}\nตอบเฉพาะข้อความตัวเลือก ห้ามมีคำอธิบาย"
                     
-                    try:
-                        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
-                        ai_answer = response.text.strip()
-                        st.write(f"💡 **AI เลือก:** {ai_answer}")
+                    contents_to_send = [prompt]
+                    if img_content:
+                        contents_to_send.append(img_content)
+                    
+                    # ระบบป้องกัน API ลิมิต (Retry Logic)
+                    ai_answer = ""
+                    for attempt in range(1, 4):
+                        try:
+                            response = model.generate_content(contents_to_send)
+                            ai_answer = response.text.strip()
+                            st.write(f"💡 **AI เลือก:** {ai_answer}")
+                            break
+                        except Exception as ai_err:
+                            err_str = str(ai_err).lower()
+                            if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
+                                st.warning(f"⏳ AI ทำงานเร็วเกินไป ติดลิมิต... รอ 10 วินาที (ครั้งที่ {attempt}/3)")
+                                time.sleep(10)
+                            else:
+                                st.warning(f"⚠️ AI ตอบไม่ได้: {ai_err}")
+                                break
+                    
+                    if ai_answer:
+                        export_text += f"ข้อ {index + 1}: {display_q}\nตอบ: {ai_answer}\n\n"
                         
-                        # กดเลือกคำตอบ
                         for radio in radio_buttons:
                             if radio.get_attribute("data-value").strip() == ai_answer:
                                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", radio)
                                 time.sleep(0.5)
                                 radio.click()
                                 break
-                    except Exception as ai_err:
-                        st.warning(f"⚠️ ไม่สามารถให้ AI ตอบข้อนี้ได้: {ai_err}")
             
-            st.warning("⚠️ บอททำงานเสร็จแล้ว! (บนระบบ Cloud แบบล่องหน โปรแกรมจะไม่สามารถกด Submit ให้ได้นะครับ คุณจะได้เห็นเฉพาะเฉลยที่ AI คิดออกบนหน้าเว็บนี้เท่านั้น)")
+            # ---------------------------------------------------------
+            # 4. ดาวน์โหลดไฟล์เฉลย
+            # ---------------------------------------------------------
+            st.markdown("### 💾 บันทึกเฉลย")
+            st.download_button(
+                label="📥 ดาวน์โหลดเฉลยเป็นไฟล์ Text",
+                data=export_text,
+                file_name="ai_form_answers.txt",
+                mime="text/plain"
+            )
+            
+            st.success("🎉 บอททำงานเสร็จสมบูรณ์!")
             
         except Exception as e:
-            st.error(f"❌ เกิดข้อผิดพลาดในการดึงข้อมูลจากเว็บ: {e}")
+            st.error(f"❌ เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
         finally:
-            # เช็คก่อนว่ามีบอทเปิดอยู่จริงๆ ถึงจะสั่งปิด (แก้ NameError)
             if driver is not None:
                 driver.quit()
