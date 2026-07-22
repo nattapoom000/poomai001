@@ -12,11 +12,11 @@ from openai import OpenAI
 import zipfile
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V6
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V7
 # ==========================================
 st.set_page_config(page_title="POOM AI SNTC", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC V6")
-st.write("แอปพลิเคชันจัดการและเฉลย Google Form พร้อมระบบแคปเจอร์หน้าจออัจฉริยะ 🇹🇭")
+st.title("🤖 POOM AI SNTC V7")
+st.write("แอปพลิเคชันจัดการและเฉลย Google Form พร้อมระบบแคปเจอร์หน้าจออัจฉริยะ (Bilingual 🇹🇭/🇬🇧)")
 
 # ==========================================
 # ส่วนที่ 1: รับค่าและการตั้งค่าระบบ
@@ -78,7 +78,7 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
-            options.add_argument("--lang=th-TH")
+            options.add_argument("--lang=th-TH,en-US")
             options.add_argument("--window-size=1920,1080")
             
             options.binary_location = "/usr/bin/chromium"
@@ -88,49 +88,57 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
             driver.get(form_url)
             time.sleep(3)
 
-            # --- ระบบทะลวงผ่านหน้าแรกและทุกหน้า (รองรับฟอร์มหลายหน้า) ---
+            # --- ระบบทะลวงผ่านหน้าแรกและทุกหน้า (เวอร์ชันขั้นสูง อุดรอยรั่วทุกช่อง) ---
             st.info("🔍 กำลังตรวจสอบหน้าเว็บและทะลวงผ่านหน้ากรอกข้อมูลเพื่อเข้าสู่ข้อสอบ...")
-            for step in range(5): # วนลูปกดปุ่ม Next เผื่อฟอร์มมีหลายหน้ากรอกข้อมูล
+            for step in range(5): # วนลูปกดปุ่ม Next เผื่อฟอร์มมีหลายหน้า
                 try:
                     time.sleep(2)
-                    # กรอกข้อมูลช่อง Text ทั่วไปใส่ชื่อ
-                    text_inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='email'] | //textarea")
+                    
+                    # 1. กรอกข้อมูลช่อง Text ทั้งหมดด้วยตัวเลข (ผ่านได้ทั้งบังคับข้อความและบังคับตัวเลข)
+                    text_inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='email' or @type='number'] | //textarea")
                     for txt in text_inputs:
                         if txt.is_displayed():
                             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", txt)
-                            # ถ้าช่องไหนเป็นตัวเลขหรือรหัส ให้ใส่ '123456' ป้องกันเงื่อนไข Must be a number
-                            placeholder_text = txt.get_attribute("aria-describedby") or ""
                             txt.clear()
-                            if "number" in txt.get_attribute("outerHTML").lower() or "code" in txt.get_attribute("outerHTML").lower():
-                                txt.send_keys("123456")
-                            else:
-                                txt.send_keys("ทดสอบระบบ")
-                            time.sleep(0.5)
+                            txt.send_keys("123456789") 
+                            time.sleep(0.3)
 
-                    # เลือกตัวเลือก Radio ตัวแรกสุดของหน้าเสมอถ้ามีบังคับเลือก
-                    radio_groups = driver.find_elements(By.XPATH, "//div[@role='radio']")
-                    if radio_groups:
-                        try:
-                            radio_groups[0].click()
-                            time.sleep(0.5)
-                        except:
-                            pass
+                    # 2. จัดการตัวเลือก (Radio, Checkbox) ในทุกๆ บล็อกคำถาม
+                    listitems = driver.find_elements(By.XPATH, "//div[@role='listitem']")
+                    for item in listitems:
+                        # หา Radio Button
+                        radios = item.find_elements(By.XPATH, ".//div[@role='radio']")
+                        if radios:
+                            try:
+                                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", radios[0])
+                                driver.execute_script("arguments[0].click();", radios[0])
+                                time.sleep(0.2)
+                            except: pass
+                        
+                        # หา Checkbox
+                        checkboxes = item.find_elements(By.XPATH, ".//div[@role='checkbox']")
+                        if checkboxes:
+                            try:
+                                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkboxes[0])
+                                driver.execute_script("arguments[0].click();", checkboxes[0])
+                                time.sleep(0.2)
+                            except: pass
 
-                    # ค้นหาและคลิกปุ่ม Next / ถัดไป
-                    next_buttons = driver.find_elements(By.XPATH, "//span[contains(text(), 'ถัดไป') or contains(text(), 'Next')]/ancestor::div[@role='button']")
+                    # 3. ค้นหาและคลิกปุ่ม Next / ถัดไป (รองรับทั้งไทยและอังกฤษ)
+                    next_buttons = driver.find_elements(By.XPATH, "//span[contains(text(), 'ถัดไป') or contains(translate(text(), 'NEXT', 'next'), 'next')]/ancestor::div[@role='button']")
                     clicked_next = False
                     for btn in next_buttons:
                         if btn.is_displayed():
                             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
                             time.sleep(1)
                             driver.execute_script("arguments[0].click();", btn)
-                            time.sleep(3)
+                            time.sleep(3) # รอให้หน้าถัดไปโหลดเสร็จ
                             clicked_next = True
                             break
                     
                     if not clicked_next:
-                        break # ถ้าไม่มีปุ่มถัดไปแสดงว่าเข้าสู่หน้าข้อสอบหลักแล้ว
-                except:
+                        break # ถ้าไม่มีปุ่มถัดไปแสดงว่าถึงหน้าข้อสอบแล้ว หลุดลูปทันที
+                except Exception as e:
                     break
 
             # --- เวลาปัจจุบันประเทศไทย ---
@@ -188,7 +196,7 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
                             block_img = Image.open(BytesIO(block_png))
                             
                             heading = block.find_elements(By.XPATH, ".//div[@role='heading']")
-                            q_text = heading[0].text if heading else f"ข้อที่ {index+1}"
+                            q_text = heading[0].text if heading else f"Question {index+1}"
                             
                             st.markdown("---")
                             st.write(f"📌 **ข้อที่ {index + 1}:** {q_text}")
@@ -241,25 +249,25 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
                         block_img = None
                     
                     heading = block.find_elements(By.XPATH, ".//div[@role='heading']")
-                    question_text = heading[0].text if heading else f"[ข้อสอบรูปภาพ ข้อ {index+1}]"
+                    question_text = heading[0].text if heading else f"[Image Question {index+1}]"
                     
                     st.markdown("---")
                     
                     if radios:
                         st.write(f"📝 **ข้อ {index + 1} (ตัวเลือก):** {question_text}")
                         choices = [r.get_attribute("data-value") for r in radios if r.get_attribute("data-value")]
-                        prompt = f"""คุณคือผู้เชี่ยวชาญระดับสูง วิเคราะห์ภาพข้อสอบและโจทย์นี้อย่างละเอียด
-ข้อมูลอ้างอิงเวลาปัจจุบันประเทศไทย: ขณะนี้คือ {current_datetime_th}
-คำถาม: {question_text}
-ตัวเลือกที่มี:
+                        prompt = f"""You are a top-tier academic expert. Analyze this question and image carefully. The question may be in Thai or English.
+Current Thailand Time: {current_datetime_th}
+Question: {question_text}
+Available Options:
 {chr(10).join([f'- {c}' for c in choices])}
-คำสั่ง: เลือกคำตอบที่ถูกต้องที่สุด ตอบกลับมา "เฉพาะข้อความตัวเลือก" เป๊ะๆ ห้ามมีคำอธิบายเด็ดขาด"""
+Instruction: Select the single most correct option. Reply ONLY with the exact text of the correct option. Do NOT provide any explanations."""
                     else:
                         st.write(f"✍️ **ข้อ {index + 1} (พิมพ์ตอบ):** {question_text}")
-                        prompt = f"""คุณคือผู้เชี่ยวชาญระดับสูง วิเคราะห์ภาพและคำถามข้อสอบนี้อย่างละเอียด
-ข้อมูลอ้างอิงเวลาปัจจุบันประเทศไทย: ขณะนี้คือ {current_datetime_th}
-คำถาม: {question_text}
-คำสั่ง: ตอบคำถามนี้ด้วยข้อความสั้นๆ กระชับ ได้ใจความ และถูกต้องที่สุด ห้ามพิมพ์คำอธิบายหรือคำเกริ่นนำใดๆ ตอบเฉพาะส่วนที่เป็นคำตอบเท่านั้น"""
+                        prompt = f"""You are a top-tier academic expert. Analyze this question and image carefully. The question may be in Thai or English.
+Current Thailand Time: {current_datetime_th}
+Question: {question_text}
+Instruction: Answer this question correctly and concisely. Reply ONLY with the correct answer. Do NOT provide explanations."""
 
                     ai_answer = ""
                     for attempt in range(1, 4):
@@ -291,7 +299,7 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
                             if not ai_answer:
                                 raise ValueError("AI ตอบค่าว่าง")
                                 
-                            st.info(f"💡 **POOM AI สรุปคำตอบคือ:** {ai_answer}")
+                            st.info(f"💡 **AI Answer / คำตอบคือ:** {ai_answer}")
                             if block_img:
                                 st.image(block_img, caption="ภาพเฉพาะข้อนี้")
                             break
@@ -305,7 +313,7 @@ if st.button("🚀 เริ่มการทำงานของระบบ"
                                 
                     if not ai_answer:
                         st.error("❌ AI ไม่สามารถตอบข้อนี้ได้")
-                        ai_answer = "[ไม่พบคำตอบ]"
+                        ai_answer = "[ไม่พบคำตอบ / No answer found]"
 
                     export_text += f"ข้อ {index + 1}: {question_text}\nตอบ: {ai_answer}\n\n"
                         
