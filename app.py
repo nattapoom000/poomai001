@@ -13,7 +13,7 @@ import google.generativeai as genai
 from openai import OpenAI
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.4
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.4 (อัปเดต Groq Vision)
 # ==========================================
 st.set_page_config(page_title="POOM AI SNTC V6.4", page_icon="🤖", layout="centered")
 st.title("🤖 POOM AI SNTC V6.4")
@@ -70,7 +70,7 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
         block_img.save(buffered, format="PNG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    # 2. ลองใช้ Groq (โมเดลฟรี Llama 3.3 / Vision)
+    # 2. ลองใช้ Groq (อัปเดตโมเดลเป็นรุ่น 90b-vision ที่รองรับล่าสุด)
     if groq_key and groq_key != "bypass":
         try:
             client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
@@ -79,13 +79,13 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
                 messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
             response = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
+                model="llama-3.2-90b-vision-preview", # แก้ไขโมเดลตามที่ระบบของ Groq อัปเดตใหม่
                 messages=[{"role": "user", "content": messages_content}],
                 max_tokens=150
             )
             ans = response.choices[0].message.content.strip()
             if ans:
-                return ans, "Groq (Llama 3.2 Vision) ⚡"
+                return ans, "Groq (Llama 3.2 Vision 90B) ⚡"
         except Exception as e:
             st.warning(f"⚠️ Groq ติดลิมิต/ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
 
