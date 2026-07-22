@@ -1,6 +1,8 @@
 import streamlit as st
 import time
 import datetime
+import base64
+import zipfile
 from io import BytesIO
 from PIL import Image
 from selenium import webdriver
@@ -9,65 +11,135 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 import google.generativeai as genai
 from openai import OpenAI
-import zipfile
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.3
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.4
 # ==========================================
-st.set_page_config(page_title="POOM AI SNTC V6.3", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC V6.3")
-st.write("แอปพลิเคชันเฉลยข้อสอบและแคปจอ Google Form (รองรับโหลดรูปแยกทีละภาพ)")
+st.set_page_config(page_title="POOM AI SNTC V6.4", page_icon="🤖", layout="centered")
+st.title("🤖 POOM AI SNTC V6.4")
+st.write("ระบบเฉลยและแคปจอ Google Form (ระบบ Auto-Fallback สลับ AI ฟรีอัตโนมัติเมื่อติดลิมิต 🇹🇭)")
 
 # ==========================================
-# ส่วนที่ 1: รับค่าจากผู้ใช้งาน
+# ส่วนที่ 1: รับค่าและการตั้งค่าระบบ
 # ==========================================
-with st.expander("⚙️ การตั้งค่าระบบ (คลิกเพื่อซ่อน/แสดง)", expanded=True):
+with st.expander("⚙️ การตั้งค่าระบบและ API Keys (คลิกเพื่อซ่อน/แสดง)", expanded=True):
     app_mode = st.selectbox(
         "📌 เลือกโหมดการทำงาน:", 
         [
-            "🤖 AI สแกนหาเฉลยข้อสอบ (Gemini / OpenAI)", 
+            "🤖 AI สแกนหาเฉลยข้อสอบ (Auto-Fallback สลับค่ายอัตโนมัติ)", 
             "📸 แคปจอออโต้: แคปหน้าจอรวมทุกหน้า (ต่อกันเป็น 1 ภาพยาว)", 
             "📸 แคปจอออโต้: แคปแยก 1 หน้าต่อ 1 ภาพ (มีปุ่มโหลดแยกทีละภาพ)", 
             "✂️ แคปจอออโต้: แคปย่อยทีละข้อ (มีปุ่มโหลดแยกทีละข้อ)"
         ]
     )
     
+    # ช่องกรอก API Key หลายค่าย (ใส่เฉพาะที่มี)
     if "AI สแกน" in app_mode:
-        ai_provider = st.selectbox("🤖 เลือกผู้ให้บริการ AI:", ["Google Gemini", "OpenAI (ChatGPT)"])
-        api_key_input = st.text_input(f"🔑 ใส่ API Key ของ {ai_provider}:", type="password")
+        st.subheader("🔑 ตั้งค่า API Keys (ใส่เฉพาะอันที่มี ระบบจะสลับให้อัตโนมัติ)")
+        gemini_key = st.text_input("1. Google Gemini API Key (ฟรี):", type="password")
+        groq_key = st.text_input("2. Groq API Key (ฟรี / เร็วมาก):", type="password", help="สมัครฟรีที่ console.groq.com")
+        openrouter_key = st.text_input("3. OpenRouter API Key (ฟรี):", type="password", help="สมัครฟรีที่ openrouter.ai")
+        openai_key = st.text_input("4. OpenAI API Key (แบบเติมเงิน - ถ้ามี):", type="password")
     else:
-        api_key_input = "bypass_key_for_screenshot_mode"
-        ai_provider = "None"
+        gemini_key = groq_key = openrouter_key = openai_key = "bypass"
         
     form_url = st.text_input("🔗 วางลิงก์ Google Form (เฉพาะฟอร์มที่ไม่ต้องล็อกอิน):")
 
-if st.button("🚀 เริ่มสแกนและประมวลผล", type="primary"):
-    if not form_url.startswith("http") or (not api_key_input and "AI สแกน" in app_mode):
-        st.error("❌ กรุณาตรวจสอบลิงก์ Google Form หรือ API Key ให้ถูกต้อง")
-    else:
-        st.info("🌐 กำลังเชื่อมต่อเบราว์เซอร์บนระบบ Cloud...")
-        
-        ai_client, openai_client, working_model_name = None, None, ""
-        
-        if "AI สแกน" in app_mode:
-            try:
-                if ai_provider == "Google Gemini":
-                    genai.configure(api_key=api_key_input)
-                    working_model_name = 'gemini-1.5-flash'
-                    try:
-                        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                        if any('flash' in m for m in available_models):
-                            working_model_name = [m for m in available_models if 'flash' in m][0]
-                    except: pass
-                    ai_client = genai.GenerativeModel(working_model_name)
-                elif ai_provider == "OpenAI (ChatGPT)":
-                    openai_client = OpenAI(api_key=api_key_input)
-                    working_model_name = 'gpt-4o-mini'
-            except Exception as e:
-                st.error(f"❌ API Key มีปัญหา: {e}")
-                st.stop()
+# ==========================================
+# ฟังก์ชันระบบ AI Auto-Fallback
+# ==========================================
+def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, groq_key, openrouter_key, openai_key):
+    """ฟังก์ชันยิงคำถามหา AI ตามลำดับ หากค่ายไหนติดลิมิตจะสลับไปค่ายถัดไปทันที"""
+    
+    # 1. ลองใช้ Google Gemini ก่อน
+    if gemini_key and gemini_key != "bypass":
+        try:
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            contents = [prompt, block_img] if block_img else [prompt]
+            response = model.generate_content(contents)
+            if response.text.strip():
+                return response.text.strip(), "Google Gemini 🟢"
+        except Exception as e:
+            st.warning(f"⚠️ Gemini ติดลิมิต/ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+
+    # แปลงภาพเป็น Base64 สำหรับค่ายอื่นๆ
+    img_base64 = None
+    if block_img:
+        buffered = BytesIO()
+        block_img.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+    # 2. ลองใช้ Groq (โมเดลฟรี Llama 3.3 / Vision)
+    if groq_key and groq_key != "bypass":
+        try:
+            client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+            messages_content = [{"type": "text", "text": prompt}]
+            if img_base64:
+                messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
+            response = client.chat.completions.create(
+                model="llama-3.2-11b-vision-preview",
+                messages=[{"role": "user", "content": messages_content}],
+                max_tokens=150
+            )
+            ans = response.choices[0].message.content.strip()
+            if ans:
+                return ans, "Groq (Llama 3.2 Vision) ⚡"
+        except Exception as e:
+            st.warning(f"⚠️ Groq ติดลิมิต/ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+
+    # 3. ลองใช้ OpenRouter (ฟรีโมเดล)
+    if openrouter_key and openrouter_key != "bypass":
+        try:
+            client = OpenAI(api_key=openrouter_key, base_url="https://openrouter.ai/api/v1")
+            messages_content = [{"type": "text", "text": prompt}]
+            if img_base64:
+                messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
+            
+            response = client.chat.completions.create(
+                model="google/gemini-2.0-flash-exp:free",
+                messages=[{"role": "user", "content": messages_content}],
+                max_tokens=150
+            )
+            ans = response.choices[0].message.content.strip()
+            if ans:
+                return ans, "OpenRouter (Free) 🔵"
+        except Exception as e:
+            st.warning(f"⚠️ OpenRouter ติดลิมิต/ขัดข้อง... ({e})")
+
+    # 4. ลองใช้ OpenAI ChatGPT (ถ้ามี)
+    if openai_key and openai_key != "bypass":
+        try:
+            client = OpenAI(api_key=openai_key)
+            messages_content = [{"type": "text", "text": prompt}]
+            if img_base64:
+                messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": messages_content}],
+                max_tokens=150
+            )
+            ans = response.choices[0].message.content.strip()
+            if ans:
+                return ans, "OpenAI (GPT-4o mini) 🤖"
+        except Exception as e:
+            st.warning(f"⚠️ OpenAI ขัดข้อง... ({e})")
+
+    return "[ไม่พบคำตอบ / AI ทุกค่ายติดลิมิต]", "Error ❌"
+
+# ==========================================
+# ส่วนที่ 2: เริ่มการทำงานหลัก
+# ==========================================
+if st.button("🚀 เริ่มสแกนและประมวลผล", type="primary"):
+    has_keys = any([gemini_key, groq_key, openrouter_key, openai_key])
+    if not form_url.startswith("http") or (not has_keys and "AI สแกน" in app_mode):
+        st.error("❌ กรุณาตรวจสอบลิงก์ Google Form หรือใส่ API Key อย่างน้อย 1 ค่าย")
+    else:
+        st.info("🌐 กำลังเปิดบอทสแกนเนอร์บนระบบ Cloud...")
         driver = None 
+        
         try:
             options = Options()
             options.add_argument("--headless")
@@ -84,15 +156,13 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
             driver.get(form_url)
             time.sleep(3)
 
-            # --- เวลาปัจจุบัน ---
             thai_time = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
             current_datetime_th = f"{thai_time.strftime('%d/%m/%Y')} เวลา {thai_time.strftime('%H:%M:%S')}"
 
-            # --- ตัวแปรเก็บข้อมูลข้ามหน้า ---
             full_page_images = []
             zip_buffer = BytesIO()
             zip_file = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) if "แคปย่อย" in app_mode or "แคปแยก" in app_mode else None
-            export_text = f"เฉลยข้อสอบ POOM AI ({ai_provider})\nเวลาอ้างอิง: {current_datetime_th}\n" + ("="*40) + "\n\n"
+            export_text = f"เฉลยข้อสอบ POOM AI (Auto-Fallback)\nเวลาอ้างอิง: {current_datetime_th}\n" + ("="*40) + "\n\n"
             
             global_q_index = 1
 
@@ -104,7 +174,7 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                 time.sleep(2)
 
                 # ----------------------------------------------------
-                # ส่วนที่ 1: แคปจอ หรือ AI สแกน
+                # โหมดแคปจอต่างๆ
                 # ----------------------------------------------------
                 if "ต่อกันเป็น 1 ภาพยาว" in app_mode or "แคปแยก 1 หน้า" in app_mode:
                     total_height = driver.execute_script("return document.body.parentNode.scrollHeight")
@@ -122,13 +192,12 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                         zip_file.writestr(f"Page_{page_num}.png", img_byte_arr.getvalue())
                         
                         st.image(img, caption=f"ภาพหน้าจอหน้าที่ {page_num}", use_container_width=True)
-                        # --- เพิ่มปุ่มดาวน์โหลดแยกทีละภาพ ---
                         st.download_button(
                             label=f"📥 โหลดภาพหน้าที่ {page_num}",
                             data=img_byte_arr.getvalue(),
                             file_name=f"Page_{page_num}.png",
                             mime="image/png",
-                            key=f"dl_page_{page_num}" # ป้องกัน Key ซ้ำ
+                            key=f"dl_page_{page_num}"
                         )
 
                 elif "แคปย่อย" in app_mode:
@@ -145,7 +214,6 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                             zip_file.writestr(f"Page{page_num}_Q{global_q_index}.png", img_byte_arr.getvalue())
                             
                             st.image(img, caption=f"ข้อที่ {global_q_index}", use_container_width=True)
-                            # --- เพิ่มปุ่มดาวน์โหลดแยกทีละข้อ ---
                             st.download_button(
                                 label=f"📥 โหลดรูปข้อที่ {global_q_index}",
                                 data=img_byte_arr.getvalue(),
@@ -156,6 +224,9 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                             global_q_index += 1
                         except: pass
 
+                # ----------------------------------------------------
+                # โหมด AI สแกนเฉลยข้อสอบ
+                # ----------------------------------------------------
                 elif "AI สแกน" in app_mode:
                     blocks = driver.find_elements(By.XPATH, "//div[@role='listitem']")
                     for block in blocks:
@@ -176,48 +247,26 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                         if radios:
                             st.write(f"📝 **ข้อ {global_q_index} (ตัวเลือก):** {question_text}")
                             choices = [r.get_attribute("data-value") for r in radios if r.get_attribute("data-value")]
-                            prompt = f"""You are a top-tier academic expert. Analyze this question (Thai/English).
-Time: {current_datetime_th}
+                            prompt = f"""You are an academic expert. Analyze this question (Thai/English).
 Question: {question_text}
 Options: {chr(10).join([f'- {c}' for c in choices])}
 Select the single most correct option. Reply ONLY with the exact text of the correct option."""
                         else:
                             st.write(f"✍️ **ข้อ {global_q_index} (พิมพ์ตอบ):** {question_text}")
-                            prompt = f"""You are a top-tier academic expert. Answer this question correctly and concisely. Reply ONLY with the correct answer."""
+                            prompt = f"""You are an academic expert. Answer this question correctly and concisely. Reply ONLY with the correct answer."""
 
-                        ai_answer = ""
-                        for attempt in range(1, 4):
-                            try:
-                                if ai_provider == "Google Gemini":
-                                    contents = [prompt, block_img] if block_img else [prompt]
-                                    response = ai_client.generate_content(contents)
-                                    ai_answer = response.text.strip()
-                                elif ai_provider == "OpenAI (ChatGPT)":
-                                    import base64
-                                    messages_content = [{"type": "text", "text": prompt}]
-                                    if block_img:
-                                        buffered = BytesIO()
-                                        block_img.save(buffered, format="PNG")
-                                        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                                        messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
-                                    response = openai_client.chat.completions.create(
-                                        model=working_model_name, messages=[{"role": "user", "content": messages_content}], max_tokens=150
-                                    )
-                                    ai_answer = response.choices[0].message.content.strip()
-                                
-                                if ai_answer:
-                                    st.info(f"💡 **คำตอบคือ:** {ai_answer}")
-                                    break
-                            except Exception as ai_err:
-                                if "429" in str(ai_err): time.sleep(15)
-                                else: time.sleep(3)
+                        # เรียกใช้งานระบบ Auto-Fallback สลับค่ายอัตโนมัติ
+                        ai_answer, provider_used = ask_ai_with_fallback(
+                            prompt, block_img, current_datetime_th, 
+                            gemini_key, groq_key, openrouter_key, openai_key
+                        )
                         
-                        if not ai_answer: ai_answer = "[ไม่พบคำตอบ / No answer]"
+                        st.info(f"💡 **คำตอบคือ:** {ai_answer} *(ประมวลผลโดย: {provider_used})*")
                         export_text += f"ข้อ {global_q_index}: {question_text}\nตอบ: {ai_answer}\n\n"
                         global_q_index += 1
 
                 # ----------------------------------------------------
-                # ส่วนที่ 2: ตรวจสอบปุ่ม Next
+                # ระบบทะลวงไปหน้าถัดไป
                 # ----------------------------------------------------
                 next_buttons = driver.find_elements(By.XPATH, "//span[contains(text(), 'ถัดไป') or contains(text(), 'Next') or contains(text(), 'next')]/ancestor::div[@role='button']")
                 visible_next = [b for b in next_buttons if b.is_displayed()]
@@ -246,7 +295,7 @@ Select the single most correct option. Reply ONLY with the exact text of the cor
                 time.sleep(3) 
 
             # ========================================================
-            # จัดเตรียมไฟล์โหลดรวมตอนจบ (เสริมเผื่ออยากโหลดทีเดียว)
+            # จัดเตรียมไฟล์สำหรับดาวน์โหลด
             # ========================================================
             st.markdown("---")
             if "ต่อกันเป็น 1 ภาพยาว" in app_mode:
