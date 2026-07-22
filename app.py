@@ -13,11 +13,11 @@ import google.generativeai as genai
 from openai import OpenAI
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.4 (อัปเดต Groq Vision)
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.5
 # ==========================================
-st.set_page_config(page_title="POOM AI SNTC V6.4", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC V6.4")
-st.write("ระบบเฉลยและแคปจอ Google Form (ระบบ Auto-Fallback สลับ AI ฟรีอัตโนมัติเมื่อติดลิมิต 🇹🇭)")
+st.set_page_config(page_title="POOM AI SNTC V6.5", page_icon="🤖", layout="centered")
+st.title("🤖 POOM AI SNTC V6.5")
+st.write("ระบบเฉลยและแคปจอ Google Form (ระบบ Auto-Fallback + ปรับแต่งชื่อโมเดลอิสระ 🇹🇭)")
 
 # ==========================================
 # ส่วนที่ 1: รับค่าและการตั้งค่าระบบ
@@ -33,25 +33,35 @@ with st.expander("⚙️ การตั้งค่าระบบและ API
         ]
     )
     
-    # ช่องกรอก API Key หลายค่าย (ใส่เฉพาะที่มี)
     if "AI สแกน" in app_mode:
         st.subheader("🔑 ตั้งค่า API Keys (ใส่เฉพาะอันที่มี ระบบจะสลับให้อัตโนมัติ)")
+        
         gemini_key = st.text_input("1. Google Gemini API Key (ฟรี):", type="password")
+        
+        st.markdown("---")
         groq_key = st.text_input("2. Groq API Key (ฟรี / เร็วมาก):", type="password", help="สมัครฟรีที่ console.groq.com")
+        # เพิ่มช่องกรอกชื่อโมเดลของ Groq ให้เปลี่ยนได้อิสระ
+        groq_model = st.text_input("📌 ชื่อโมเดล Groq Vision (อัปเดตได้อิสระ):", value="llama-3.2-90b-vision-specdec", help="ดูชื่อโมเดลล่าสุดที่ console.groq.com/docs/models")
+        
+        st.markdown("---")
         openrouter_key = st.text_input("3. OpenRouter API Key (ฟรี):", type="password", help="สมัครฟรีที่ openrouter.ai")
+        # เพิ่มช่องกรอกชื่อโมเดลของ OpenRouter
+        openrouter_model = st.text_input("📌 ชื่อโมเดล OpenRouter:", value="google/gemini-2.0-flash-exp:free")
+        
+        st.markdown("---")
         openai_key = st.text_input("4. OpenAI API Key (แบบเติมเงิน - ถ้ามี):", type="password")
     else:
-        gemini_key = groq_key = openrouter_key = openai_key = "bypass"
+        gemini_key = groq_key = groq_model = openrouter_key = openrouter_model = openai_key = "bypass"
         
     form_url = st.text_input("🔗 วางลิงก์ Google Form (เฉพาะฟอร์มที่ไม่ต้องล็อกอิน):")
 
 # ==========================================
 # ฟังก์ชันระบบ AI Auto-Fallback
 # ==========================================
-def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, groq_key, openrouter_key, openai_key):
+def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, groq_key, groq_model, openrouter_key, openrouter_model, openai_key):
     """ฟังก์ชันยิงคำถามหา AI ตามลำดับ หากค่ายไหนติดลิมิตจะสลับไปค่ายถัดไปทันที"""
     
-    # 1. ลองใช้ Google Gemini ก่อน
+    # 1. ลองใช้ Google Gemini
     if gemini_key and gemini_key != "bypass":
         try:
             genai.configure(api_key=gemini_key)
@@ -61,16 +71,16 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
             if response.text.strip():
                 return response.text.strip(), "Google Gemini 🟢"
         except Exception as e:
-            st.warning(f"⚠️ Gemini ติดลิมิต/ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+            st.warning(f"⚠️ Gemini ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
 
-    # แปลงภาพเป็น Base64 สำหรับค่ายอื่นๆ
+    # แปลงภาพเป็น Base64
     img_base64 = None
     if block_img:
         buffered = BytesIO()
         block_img.save(buffered, format="PNG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    # 2. ลองใช้ Groq (อัปเดตโมเดลเป็นรุ่น 90b-vision ที่รองรับล่าสุด)
+    # 2. ลองใช้ Groq (ใช้ชื่อโมเดลจากหน้าเว็บ)
     if groq_key and groq_key != "bypass":
         try:
             client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
@@ -79,17 +89,17 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
                 messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
             response = client.chat.completions.create(
-                model="llama-3.2-90b-vision-preview", # แก้ไขโมเดลตามที่ระบบของ Groq อัปเดตใหม่
+                model=groq_model.strip(), # ใช้ค่าจากกล่องข้อความ
                 messages=[{"role": "user", "content": messages_content}],
                 max_tokens=150
             )
             ans = response.choices[0].message.content.strip()
             if ans:
-                return ans, "Groq (Llama 3.2 Vision 90B) ⚡"
+                return ans, f"Groq ({groq_model}) ⚡"
         except Exception as e:
-            st.warning(f"⚠️ Groq ติดลิมิต/ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+            st.warning(f"⚠️ Groq ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
 
-    # 3. ลองใช้ OpenRouter (ฟรีโมเดล)
+    # 3. ลองใช้ OpenRouter (ใช้ชื่อโมเดลจากหน้าเว็บ)
     if openrouter_key and openrouter_key != "bypass":
         try:
             client = OpenAI(api_key=openrouter_key, base_url="https://openrouter.ai/api/v1")
@@ -98,17 +108,17 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
                 messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
             response = client.chat.completions.create(
-                model="google/gemini-2.0-flash-exp:free",
+                model=openrouter_model.strip(), # ใช้ค่าจากกล่องข้อความ
                 messages=[{"role": "user", "content": messages_content}],
                 max_tokens=150
             )
             ans = response.choices[0].message.content.strip()
             if ans:
-                return ans, "OpenRouter (Free) 🔵"
+                return ans, f"OpenRouter ({openrouter_model}) 🔵"
         except Exception as e:
-            st.warning(f"⚠️ OpenRouter ติดลิมิต/ขัดข้อง... ({e})")
+            st.warning(f"⚠️ OpenRouter ขัดข้อง... ({e})")
 
-    # 4. ลองใช้ OpenAI ChatGPT (ถ้ามี)
+    # 4. ลองใช้ OpenAI ChatGPT
     if openai_key and openai_key != "bypass":
         try:
             client = OpenAI(api_key=openai_key)
@@ -127,7 +137,7 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
         except Exception as e:
             st.warning(f"⚠️ OpenAI ขัดข้อง... ({e})")
 
-    return "[ไม่พบคำตอบ / AI ทุกค่ายติดลิมิต]", "Error ❌"
+    return "[ไม่พบคำตอบ / AI ทุกค่ายติดลิมิตหรือโมเดลมีปัญหา]", "Error ❌"
 
 # ==========================================
 # ส่วนที่ 2: เริ่มการทำงานหลัก
@@ -255,10 +265,10 @@ Select the single most correct option. Reply ONLY with the exact text of the cor
                             st.write(f"✍️ **ข้อ {global_q_index} (พิมพ์ตอบ):** {question_text}")
                             prompt = f"""You are an academic expert. Answer this question correctly and concisely. Reply ONLY with the correct answer."""
 
-                        # เรียกใช้งานระบบ Auto-Fallback สลับค่ายอัตโนมัติ
+                        # โยนพารามิเตอร์ชื่อโมเดลเข้าไปในฟังก์ชัน Fallback
                         ai_answer, provider_used = ask_ai_with_fallback(
                             prompt, block_img, current_datetime_th, 
-                            gemini_key, groq_key, openrouter_key, openai_key
+                            gemini_key, groq_key, groq_model, openrouter_key, openrouter_model, openai_key
                         )
                         
                         st.info(f"💡 **คำตอบคือ:** {ai_answer} *(ประมวลผลโดย: {provider_used})*")
