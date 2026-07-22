@@ -3,6 +3,7 @@ import time
 import datetime
 import base64
 import zipfile
+import re
 from io import BytesIO
 from PIL import Image
 from selenium import webdriver
@@ -13,11 +14,11 @@ import google.generativeai as genai
 from openai import OpenAI
 
 # ==========================================
-# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.5
+# ตั้งค่าหน้าเว็บ POOM AI SNTC V6.6
 # ==========================================
-st.set_page_config(page_title="POOM AI SNTC V6.5", page_icon="🤖", layout="centered")
-st.title("🤖 POOM AI SNTC V6.5")
-st.write("ระบบเฉลยและแคปจอ Google Form (ระบบ Auto-Fallback + ปรับแต่งชื่อโมเดลอิสระ 🇹🇭)")
+st.set_page_config(page_title="POOM AI SNTC V6.6", page_icon="🤖", layout="centered")
+st.title("🤖 POOM AI SNTC V6.6")
+st.write("ระบบเฉลยและแคปจอ Google Form (ระบบสลับค่าย + บังคับ AI ตอบตรงเป้า 🇹🇭)")
 
 # ==========================================
 # ส่วนที่ 1: รับค่าและการตั้งค่าระบบ
@@ -35,17 +36,14 @@ with st.expander("⚙️ การตั้งค่าระบบและ API
     
     if "AI สแกน" in app_mode:
         st.subheader("🔑 ตั้งค่า API Keys (ใส่เฉพาะอันที่มี ระบบจะสลับให้อัตโนมัติ)")
-        
         gemini_key = st.text_input("1. Google Gemini API Key (ฟรี):", type="password")
         
         st.markdown("---")
-        groq_key = st.text_input("2. Groq API Key (ฟรี / เร็วมาก):", type="password", help="สมัครฟรีที่ console.groq.com")
-        # เพิ่มช่องกรอกชื่อโมเดลของ Groq ให้เปลี่ยนได้อิสระ
-        groq_model = st.text_input("📌 ชื่อโมเดล Groq Vision (อัปเดตได้อิสระ):", value="llama-3.2-90b-vision-specdec", help="ดูชื่อโมเดลล่าสุดที่ console.groq.com/docs/models")
+        groq_key = st.text_input("2. Groq API Key (ฟรี / เร็วมาก):", type="password")
+        groq_model = st.text_input("📌 ชื่อโมเดล Groq Vision:", value="qwen/qwen3.6-27b")
         
         st.markdown("---")
-        openrouter_key = st.text_input("3. OpenRouter API Key (ฟรี):", type="password", help="สมัครฟรีที่ openrouter.ai")
-        # เพิ่มช่องกรอกชื่อโมเดลของ OpenRouter
+        openrouter_key = st.text_input("3. OpenRouter API Key (ฟรี):", type="password")
         openrouter_model = st.text_input("📌 ชื่อโมเดล OpenRouter:", value="google/gemini-2.0-flash-exp:free")
         
         st.markdown("---")
@@ -56,10 +54,22 @@ with st.expander("⚙️ การตั้งค่าระบบและ API
     form_url = st.text_input("🔗 วางลิงก์ Google Form (เฉพาะฟอร์มที่ไม่ต้องล็อกอิน):")
 
 # ==========================================
-# ฟังก์ชันระบบ AI Auto-Fallback
+# ฟังก์ชันระบบ AI Auto-Fallback & Clean Output
 # ==========================================
+def clean_ai_response(text):
+    """ทำความสะอาดข้อความ ตัดแท็ก <think> และดึงเฉพาะคำตอบ"""
+    text = text.strip()
+    if "<think>" in text:
+        if "</think>" in text:
+            # ถ้ามีปิดแท็ก ให้เอาข้อความหลังแท็กปิด
+            text = text.split("</think>")[-1].strip()
+        else:
+            # ถ้าโควตาหมดจนแท็กไม่ปิด ให้ถือว่าไม่ได้คำตอบ
+            return ""
+    return text
+
 def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, groq_key, groq_model, openrouter_key, openrouter_model, openai_key):
-    """ฟังก์ชันยิงคำถามหา AI ตามลำดับ หากค่ายไหนติดลิมิตจะสลับไปค่ายถัดไปทันที"""
+    """ฟังก์ชันยิงคำถามหา AI พร้อมระบบสลับค่ายอัตโนมัติ"""
     
     # 1. ลองใช้ Google Gemini
     if gemini_key and gemini_key != "bypass":
@@ -68,10 +78,10 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
             model = genai.GenerativeModel('gemini-1.5-flash')
             contents = [prompt, block_img] if block_img else [prompt]
             response = model.generate_content(contents)
-            if response.text.strip():
-                return response.text.strip(), "Google Gemini 🟢"
+            ans = clean_ai_response(response.text)
+            if ans: return ans, "Google Gemini 🟢"
         except Exception as e:
-            st.warning(f"⚠️ Gemini ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+            st.warning(f"⚠️ Gemini ขัดข้อง... ({e})")
 
     # แปลงภาพเป็น Base64
     img_base64 = None
@@ -80,7 +90,7 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
         block_img.save(buffered, format="PNG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    # 2. ลองใช้ Groq (ใช้ชื่อโมเดลจากหน้าเว็บ)
+    # 2. ลองใช้ Groq
     if groq_key and groq_key != "bypass":
         try:
             client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
@@ -89,17 +99,16 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
                 messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
             response = client.chat.completions.create(
-                model=groq_model.strip(), # ใช้ค่าจากกล่องข้อความ
+                model=groq_model.strip(),
                 messages=[{"role": "user", "content": messages_content}],
-                max_tokens=150
+                max_tokens=1000 # เพิ่มโควตาให้เผื่อโมเดลมันอยากคิดยาวๆ ก่อนตอบ
             )
-            ans = response.choices[0].message.content.strip()
-            if ans:
-                return ans, f"Groq ({groq_model}) ⚡"
+            ans = clean_ai_response(response.choices[0].message.content)
+            if ans: return ans, f"Groq ({groq_model}) ⚡"
         except Exception as e:
-            st.warning(f"⚠️ Groq ขัดข้อง สลับไปใช้ AI สำรอง... ({e})")
+            st.warning(f"⚠️ Groq ขัดข้อง... ({e})")
 
-    # 3. ลองใช้ OpenRouter (ใช้ชื่อโมเดลจากหน้าเว็บ)
+    # 3. ลองใช้ OpenRouter
     if openrouter_key and openrouter_key != "bypass":
         try:
             client = OpenAI(api_key=openrouter_key, base_url="https://openrouter.ai/api/v1")
@@ -108,13 +117,12 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
                 messages_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}})
             
             response = client.chat.completions.create(
-                model=openrouter_model.strip(), # ใช้ค่าจากกล่องข้อความ
+                model=openrouter_model.strip(),
                 messages=[{"role": "user", "content": messages_content}],
-                max_tokens=150
+                max_tokens=1000
             )
-            ans = response.choices[0].message.content.strip()
-            if ans:
-                return ans, f"OpenRouter ({openrouter_model}) 🔵"
+            ans = clean_ai_response(response.choices[0].message.content)
+            if ans: return ans, f"OpenRouter ({openrouter_model}) 🔵"
         except Exception as e:
             st.warning(f"⚠️ OpenRouter ขัดข้อง... ({e})")
 
@@ -129,15 +137,14 @@ def ask_ai_with_fallback(prompt, block_img, current_datetime_th, gemini_key, gro
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": messages_content}],
-                max_tokens=150
+                max_tokens=1000
             )
-            ans = response.choices[0].message.content.strip()
-            if ans:
-                return ans, "OpenAI (GPT-4o mini) 🤖"
+            ans = clean_ai_response(response.choices[0].message.content)
+            if ans: return ans, "OpenAI (GPT-4o mini) 🤖"
         except Exception as e:
             st.warning(f"⚠️ OpenAI ขัดข้อง... ({e})")
 
-    return "[ไม่พบคำตอบ / AI ทุกค่ายติดลิมิตหรือโมเดลมีปัญหา]", "Error ❌"
+    return "[ไม่พบคำตอบ / AI ไม่สามารถประมวลผลข้อนี้ได้]", "Error ❌"
 
 # ==========================================
 # ส่วนที่ 2: เริ่มการทำงานหลัก
@@ -172,20 +179,14 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
             full_page_images = []
             zip_buffer = BytesIO()
             zip_file = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) if "แคปย่อย" in app_mode or "แคปแยก" in app_mode else None
-            export_text = f"เฉลยข้อสอบ POOM AI (Auto-Fallback)\nเวลาอ้างอิง: {current_datetime_th}\n" + ("="*40) + "\n\n"
+            export_text = f"เฉลยข้อสอบ POOM AI (Auto-Fallback V6.6)\nเวลาอ้างอิง: {current_datetime_th}\n" + ("="*40) + "\n\n"
             
             global_q_index = 1
 
-            # ========================================================
-            # ระบบประมวลผลทีละหน้า
-            # ========================================================
             for page_num in range(1, 15): 
                 st.markdown(f"### 📄 กำลังประมวลผลหน้าที่ {page_num}")
                 time.sleep(2)
 
-                # ----------------------------------------------------
-                # โหมดแคปจอต่างๆ
-                # ----------------------------------------------------
                 if "ต่อกันเป็น 1 ภาพยาว" in app_mode or "แคปแยก 1 หน้า" in app_mode:
                     total_height = driver.execute_script("return document.body.parentNode.scrollHeight")
                     driver.set_window_size(1920, total_height + 200)
@@ -200,7 +201,6 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                         img_byte_arr = BytesIO()
                         img.save(img_byte_arr, format="PNG")
                         zip_file.writestr(f"Page_{page_num}.png", img_byte_arr.getvalue())
-                        
                         st.image(img, caption=f"ภาพหน้าจอหน้าที่ {page_num}", use_container_width=True)
                         st.download_button(
                             label=f"📥 โหลดภาพหน้าที่ {page_num}",
@@ -234,9 +234,6 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                             global_q_index += 1
                         except: pass
 
-                # ----------------------------------------------------
-                # โหมด AI สแกนเฉลยข้อสอบ
-                # ----------------------------------------------------
                 elif "AI สแกน" in app_mode:
                     blocks = driver.find_elements(By.XPATH, "//div[@role='listitem']")
                     for block in blocks:
@@ -254,18 +251,21 @@ if st.button("🚀 เริ่มสแกนและประมวลผล"
                         question_text = heading[0].text if heading else f"[Question {global_q_index}]"
                         
                         st.markdown("---")
+                        
+                        # กำชับ Prompt ขั้นเด็ดขาด ห้ามใช้แท็ก <think> เด็ดขาด
                         if radios:
                             st.write(f"📝 **ข้อ {global_q_index} (ตัวเลือก):** {question_text}")
                             choices = [r.get_attribute("data-value") for r in radios if r.get_attribute("data-value")]
-                            prompt = f"""You are an academic expert. Analyze this question (Thai/English).
+                            prompt = f"""You are a strict academic expert. Analyze this question.
 Question: {question_text}
 Options: {chr(10).join([f'- {c}' for c in choices])}
-Select the single most correct option. Reply ONLY with the exact text of the correct option."""
+CRITICAL INSTRUCTION: DO NOT use <think> tags. DO NOT show your reasoning or steps. Reply ONLY with the exact text of the correct option."""
                         else:
                             st.write(f"✍️ **ข้อ {global_q_index} (พิมพ์ตอบ):** {question_text}")
-                            prompt = f"""You are an academic expert. Answer this question correctly and concisely. Reply ONLY with the correct answer."""
+                            prompt = f"""You are a strict academic expert. Answer this question correctly.
+Question: {question_text}
+CRITICAL INSTRUCTION: DO NOT use <think> tags. DO NOT show your reasoning or steps. Reply ONLY with the correct answer concisely."""
 
-                        # โยนพารามิเตอร์ชื่อโมเดลเข้าไปในฟังก์ชัน Fallback
                         ai_answer, provider_used = ask_ai_with_fallback(
                             prompt, block_img, current_datetime_th, 
                             gemini_key, groq_key, groq_model, openrouter_key, openrouter_model, openai_key
